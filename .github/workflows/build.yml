@@ -27,6 +27,7 @@ jobs:
         shell: bash
         run: |
           west build -b b_l4s5i_iot01a app
+          find .
       - name: Upload sample_application artifacts
         uses: actions/upload-artifact@v4.6.1
         with:

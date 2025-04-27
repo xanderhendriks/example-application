@@ -25,9 +25,13 @@ jobs:
         with:
           app-path: example-application
           toolchains: arm-zephyr-eabi
-
       - name: Build firmware
         working-directory: example-application
         shell: bash
         run: |
           west build -b b_l4s5i_iot01a app
+      - name: Upload sample_application artifacts
+        uses: actions/upload-artifact@v4.6.1
+        with:
+          name: zephyr-sample_application
+          path: example-application/app/build/zephyr/zephyr.*

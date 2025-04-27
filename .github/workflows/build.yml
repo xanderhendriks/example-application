@@ -31,4 +31,4 @@ jobs:
         uses: actions/upload-artifact@v4.6.1
         with:
           name: zephyr-sample_application
-          path: build/zephyr
+          path: example-application/build/zephyr/zephyr.*

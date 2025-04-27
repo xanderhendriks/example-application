@@ -1,80 +1,84 @@
-/*
- * Copyright (c) 2021 Nordic Semiconductor ASA
- * SPDX-License-Identifier: Apache-2.0
- */
-
 #include <zephyr/kernel.h>
-#include <zephyr/drivers/sensor.h>
+#include <zephyr/drivers/gpio.h>
+#include <zephyr/net/wifi_mgmt.h>
+#include <zephyr/net/net_if.h>
 #include <zephyr/logging/log.h>
 
-#include <app/drivers/blink.h>
+LOG_MODULE_REGISTER(main);
 
-#include <app_version.h>
+#define MY_SSID     "nxwireless-legacy"
+#define MY_PASS     "koalaandtreeandpuppylonglegs"
 
-LOG_MODULE_REGISTER(main, CONFIG_APP_LOG_LEVEL);
 
-#define BLINK_PERIOD_MS_STEP 100U
-#define BLINK_PERIOD_MS_MAX  1000U
+static struct net_mgmt_event_callback wifi_cb;
+
+static void print_ip_info(struct net_if *iface)
+{
+    char buf[NET_IPV4_ADDR_LEN];
+
+    struct net_if_addr *ifaddr = (struct net_if_addr*) &iface->config.ip.ipv4->unicast[0];
+    if (ifaddr && ifaddr->address.family == AF_INET) {
+        net_addr_ntop(AF_INET, &ifaddr->address.in_addr, buf, sizeof(buf));
+        LOG_INF("Assigned IP: %s", buf);
+    } else {
+        LOG_WRN("No IPv4 address assigned");
+    }
+}
+
+static void wifi_event_handler(struct net_mgmt_event_callback *cb,
+                               uint32_t mgmt_event, struct net_if *iface)
+{
+    switch (mgmt_event) {
+    case NET_EVENT_WIFI_CONNECT_RESULT:
+        struct wifi_status *status = (struct wifi_status *)cb->info;
+        if (status->status) {
+            LOG_ERR("WiFi connection failed (%d)", status->status);
+        } else {
+            LOG_INF("WiFi successfully connected");
+        }
+		print_ip_info(iface);
+        break;
+
+    case NET_EVENT_WIFI_DISCONNECT_RESULT:
+        LOG_WRN("WiFi disconnected");
+        break;
+    }
+}
 
 int main(void)
 {
-	int ret;
-	unsigned int period_ms = BLINK_PERIOD_MS_MAX;
-	const struct device *sensor, *blink;
-	struct sensor_value last_val = { 0 }, val;
+    struct net_if *iface = net_if_get_default();
 
-	printk("Zephyr Example Application %s\n", APP_VERSION_STRING);
+    struct wifi_connect_req_params cnx_params = {
+        .ssid = MY_SSID,
+        .ssid_length = strlen(MY_SSID),
+        .psk = MY_PASS,
+        .psk_length = strlen(MY_PASS),
+        .security = WIFI_SECURITY_TYPE_PSK,
+        .channel = WIFI_CHANNEL_ANY,
+        .timeout = SYS_FOREVER_MS,
+    };
 
-	sensor = DEVICE_DT_GET(DT_NODELABEL(example_sensor));
-	if (!device_is_ready(sensor)) {
-		LOG_ERR("Sensor not ready");
-		return 0;
-	}
+    net_mgmt_init_event_callback(&wifi_cb, wifi_event_handler,
+        NET_EVENT_WIFI_CONNECT_RESULT |
+        NET_EVENT_WIFI_DISCONNECT_RESULT);
 
-	blink = DEVICE_DT_GET(DT_NODELABEL(blink_led));
-	if (!device_is_ready(blink)) {
-		LOG_ERR("Blink LED not ready");
-		return 0;
-	}
+    net_mgmt_add_event_callback(&wifi_cb);
 
-	ret = blink_off(blink);
-	if (ret < 0) {
-		LOG_ERR("Could not turn off LED (%d)", ret);
-		return 0;
-	}
+    int ret = net_mgmt(NET_REQUEST_WIFI_CONNECT, iface, &cnx_params, sizeof(cnx_params));
+    if (ret) {
+        LOG_ERR("WiFi connect failed: %d", ret);
+    } else {
+        LOG_INF("WiFi connected");
+    }
 
-	printk("Use the sensor to change LED blinking period\n");
+    /* Optional: Blink LED */
+    const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
+    gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
 
-	while (1) {
-		ret = sensor_sample_fetch(sensor);
-		if (ret < 0) {
-			LOG_ERR("Could not fetch sample (%d)", ret);
-			return 0;
-		}
-
-		ret = sensor_channel_get(sensor, SENSOR_CHAN_PROX, &val);
-		if (ret < 0) {
-			LOG_ERR("Could not get sample (%d)", ret);
-			return 0;
-		}
-
-		if ((last_val.val1 == 0) && (val.val1 == 1)) {
-			if (period_ms == 0U) {
-				period_ms = BLINK_PERIOD_MS_MAX;
-			} else {
-				period_ms -= BLINK_PERIOD_MS_STEP;
-			}
-
-			printk("Proximity detected, setting LED period to %u ms\n",
-			       period_ms);
-			blink_set_period_ms(blink, period_ms);
-		}
-
-		last_val = val;
-
-		k_sleep(K_MSEC(100));
-	}
-
-	return 0;
+    while (1) {
+        gpio_pin_toggle_dt(&led);
+        k_sleep(K_MSEC(1000));
+    }
+    return 0;
 }
-
